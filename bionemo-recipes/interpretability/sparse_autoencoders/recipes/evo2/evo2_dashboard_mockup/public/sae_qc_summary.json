@@ -1,0 +1,644 @@
+{
+  "sae_metadata": {
+    "model": "Evo 2 1B",
+    "layer": 22,
+    "width": 15360,
+    "k": 32,
+    "training_tokens": "25M prok+euk",
+    "expansion_factor": 8
+  },
+  "training_quality": {
+    "dead_latent_pct": {
+      "value": 0.07,
+      "target_max": 5.0,
+      "passing": true,
+      "real": true
+    },
+    "fvu": {
+      "value": 0.006,
+      "target_max": 0.35,
+      "passing": true,
+      "real": true
+    },
+    "l0": {
+      "value": 32,
+      "width": 15360,
+      "passing": true,
+      "real": true
+    },
+    "loss_recovered": {
+      "value": 0.97,
+      "target_min": 0.95,
+      "passing": true,
+      "real": false
+    }
+  },
+  "six_property_qc": {
+    "n_features_tested": 50,
+    "n_headline_features": 23,
+    "headline_threshold": "\u22655 of 6 properties",
+    "properties": [
+      {
+        "name": "Specificity",
+        "pass_rate": 0.84,
+        "description": "Feature fires on identifiable pattern"
+      },
+      {
+        "name": "Sensitivity",
+        "pass_rate": 0.72,
+        "description": "Fires whenever pattern appears"
+      },
+      {
+        "name": "Reconstruction faithfulness",
+        "pass_rate": 0.91,
+        "description": "Ablation hurts loss"
+      },
+      {
+        "name": "Binned activation",
+        "pass_rate": 0.68,
+        "description": "Clear on/off"
+      },
+      {
+        "name": "Decomposability",
+        "pass_rate": 0.78,
+        "description": "Concentrated in top activators"
+      },
+      {
+        "name": "Causal effect",
+        "pass_rate": 0.42,
+        "description": "Clamping changes output"
+      }
+    ]
+  },
+  "bio_qc": {
+    "n_total_matching": 87,
+    "f1_threshold": 0.6,
+    "by_database": [
+      {
+        "database": "RefSeq",
+        "n_matching": 41
+      },
+      {
+        "database": "JASPAR",
+        "n_matching": 22
+      },
+      {
+        "database": "Rfam",
+        "n_matching": 18
+      },
+      {
+        "database": "geNomad",
+        "n_matching": 6
+      }
+    ]
+  },
+  "downstream_probes": {
+    "brca1": {
+      "task": "BRCA1 variant effect prediction",
+      "dataset": "Findlay et al. 2018, 3,893 SNVs",
+      "results": [
+        {
+          "input": "Dense Evo 2 (block 20)",
+          "auroc": 0.95,
+          "is_baseline": true
+        },
+        {
+          "input": "SAE encoder features",
+          "auroc": 0.92
+        },
+        {
+          "input": "SAE decoder reconstruction",
+          "auroc": 0.94
+        }
+      ]
+    },
+    "exon": {
+      "task": "Exon classification",
+      "dataset": "8 held-out species, per-position binary labels",
+      "results": [
+        {
+          "input": "Dense Evo 2 (block 26)",
+          "auroc": 0.94,
+          "is_baseline": true
+        },
+        {
+          "input": "SAE encoder features",
+          "auroc": 0.91
+        },
+        {
+          "input": "SAE decoder reconstruction",
+          "auroc": 0.93
+        }
+      ]
+    }
+  },
+  "size_exploration": {
+    "in_progress": true,
+    "data": [
+      {
+        "expansion": 8,
+        "width": 15360,
+        "dead_pct": 0.07,
+        "interpretable_count": 142,
+        "fvu": 0.006,
+        "real": true
+      },
+      {
+        "expansion": 16,
+        "width": 30720,
+        "dead_pct": 0.21,
+        "interpretable_count": 198,
+        "fvu": 0.004,
+        "real": false
+      }
+    ]
+  },
+  "causal_validation": {
+    "n_validated": 5,
+    "headline_narrative": "Amplifying the kanamycin-resistance feature shifts P(G) at position 1408 of 16S rRNA from 0.08 (baseline) to 0.71 (steered), matching the known A1408G aminoglycoside-resistance mutation."
+  },
+  "top_features": [
+    {
+      "feature_id": 1247,
+      "label": "alpha_helix",
+      "best_f1": 0.84,
+      "best_f1_database": "InterPro",
+      "auto_interp_score": 0.78,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        false,
+        true,
+        true
+      ],
+      "activation_freq": 0.12,
+      "max_activation": 18.4,
+      "top_context": "Coding regions, codon-3 positions",
+      "domain": "euk",
+      "headline": true,
+      "qc_scores": {
+        "specificity": 0.85,
+        "sensitivity": 0.66,
+        "reconstruction": 0.74,
+        "binned": 0.22,
+        "decomposability": 0.89,
+        "causal": 0.87
+      }
+    },
+    {
+      "feature_id": 3891,
+      "label": "TATA_box",
+      "best_f1": 0.79,
+      "best_f1_database": "JASPAR",
+      "auto_interp_score": 0.82,
+      "qc_dots": [
+        true,
+        true,
+        false,
+        true,
+        true,
+        true
+      ],
+      "activation_freq": 0.04,
+      "max_activation": 22.1,
+      "top_context": "TSS \u221230 region, TATAAT motif",
+      "domain": "both",
+      "headline": true,
+      "qc_scores": {
+        "specificity": 0.94,
+        "sensitivity": 0.68,
+        "reconstruction": 0.28,
+        "binned": 0.66,
+        "decomposability": 0.72,
+        "causal": 0.81
+      }
+    },
+    {
+      "feature_id": 5066,
+      "label": "kanamycin_resistance",
+      "best_f1": 0.71,
+      "best_f1_database": "geNomad",
+      "auto_interp_score": 0.74,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "activation_freq": 0.02,
+      "max_activation": 27.6,
+      "top_context": "16S rRNA A1408 (decoding center)",
+      "domain": "prok",
+      "headline": true,
+      "qc_scores": {
+        "specificity": 0.66,
+        "sensitivity": 0.71,
+        "reconstruction": 0.86,
+        "binned": 0.82,
+        "decomposability": 0.22,
+        "causal": 0.84
+      }
+    },
+    {
+      "feature_id": 8023,
+      "label": "exon_CDS",
+      "best_f1": 0.92,
+      "best_f1_database": "RefSeq",
+      "auto_interp_score": 0.69,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "activation_freq": 0.18,
+      "max_activation": 14.8,
+      "top_context": "Protein coding exons, broad",
+      "domain": "euk",
+      "headline": true,
+      "qc_scores": {
+        "specificity": 0.91,
+        "sensitivity": 0.65,
+        "reconstruction": 0.91,
+        "binned": 0.87,
+        "decomposability": 0.76,
+        "causal": 0.2
+      }
+    },
+    {
+      "feature_id": 9112,
+      "label": "splice_donor_5p",
+      "best_f1": 0.65,
+      "best_f1_database": "RefSeq",
+      "auto_interp_score": 0.71,
+      "qc_dots": [
+        true,
+        false,
+        true,
+        true,
+        true,
+        false
+      ],
+      "activation_freq": 0.008,
+      "max_activation": 19.3,
+      "top_context": "Exon\u2013intron 5\u2032 splice site (GT)",
+      "domain": "euk",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.96,
+        "sensitivity": 0.25,
+        "reconstruction": 0.68,
+        "binned": 0.68,
+        "decomposability": 0.92,
+        "causal": 0.33
+      }
+    },
+    {
+      "feature_id": 14278,
+      "label": "frameshift_sensitivity",
+      "best_f1": 0.58,
+      "best_f1_database": "RefSeq",
+      "auto_interp_score": 0.66,
+      "qc_dots": [
+        true,
+        true,
+        false,
+        true,
+        false,
+        false
+      ],
+      "activation_freq": 0.05,
+      "max_activation": 11.2,
+      "top_context": "Reading-frame perturbations in CDS",
+      "domain": "both",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.91,
+        "sensitivity": 0.88,
+        "reconstruction": 0.31,
+        "binned": 0.96,
+        "decomposability": 0.26,
+        "causal": 0.32
+      }
+    },
+    {
+      "feature_id": 2103,
+      "label": "tRNA_structural",
+      "best_f1": 0.81,
+      "best_f1_database": "Rfam",
+      "auto_interp_score": 0.75,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "activation_freq": 0.006,
+      "max_activation": 25.7,
+      "top_context": "tRNA acceptor stem + anticodon loop",
+      "domain": "both",
+      "headline": true,
+      "qc_scores": {
+        "specificity": 0.92,
+        "sensitivity": 0.85,
+        "reconstruction": 0.93,
+        "binned": 0.83,
+        "decomposability": 0.88,
+        "causal": 0.16
+      }
+    },
+    {
+      "feature_id": 6754,
+      "label": "promoter_region",
+      "best_f1": 0.62,
+      "best_f1_database": "ENCODE",
+      "auto_interp_score": 0.7,
+      "qc_dots": [
+        true,
+        true,
+        false,
+        false,
+        true,
+        false
+      ],
+      "activation_freq": 0.03,
+      "max_activation": 16.5,
+      "top_context": "\u2212500 to \u22121 upstream of TSS",
+      "domain": "euk",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.72,
+        "sensitivity": 0.74,
+        "reconstruction": 0.17,
+        "binned": 0.22,
+        "decomposability": 0.68,
+        "causal": 0.23
+      }
+    },
+    {
+      "feature_id": 11432,
+      "label": "phage_integrase",
+      "best_f1": 0.77,
+      "best_f1_database": "geNomad",
+      "auto_interp_score": 0.72,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        false,
+        true,
+        false
+      ],
+      "activation_freq": 0.003,
+      "max_activation": 21.4,
+      "top_context": "Bacteriophage attP/attB sites",
+      "domain": "prok",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.85,
+        "sensitivity": 0.77,
+        "reconstruction": 0.77,
+        "binned": 0.21,
+        "decomposability": 0.74,
+        "causal": 0.43
+      }
+    },
+    {
+      "feature_id": 4521,
+      "label": "rRNA_16S_core",
+      "best_f1": 0.88,
+      "best_f1_database": "Rfam",
+      "auto_interp_score": 0.8,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "activation_freq": 0.011,
+      "max_activation": 24.9,
+      "top_context": "16S rRNA central pseudoknot",
+      "domain": "prok",
+      "headline": true,
+      "qc_scores": {
+        "specificity": 0.86,
+        "sensitivity": 0.84,
+        "reconstruction": 0.7,
+        "binned": 0.88,
+        "decomposability": 0.7,
+        "causal": 0.26
+      }
+    },
+    {
+      "feature_id": 7890,
+      "label": "intron_branch_point",
+      "best_f1": 0.54,
+      "best_f1_database": "RefSeq",
+      "auto_interp_score": 0.63,
+      "qc_dots": [
+        true,
+        false,
+        true,
+        false,
+        true,
+        false
+      ],
+      "activation_freq": 0.014,
+      "max_activation": 13.7,
+      "top_context": "Intron 3\u2032 branch-point YNYURAC",
+      "domain": "euk",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.97,
+        "sensitivity": 0.34,
+        "reconstruction": 0.83,
+        "binned": 0.36,
+        "decomposability": 0.92,
+        "causal": 0.38
+      }
+    },
+    {
+      "feature_id": 13201,
+      "label": "GC_rich_compositional",
+      "best_f1": 0.49,
+      "best_f1_database": "\u2014",
+      "auto_interp_score": 0.59,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        false
+      ],
+      "activation_freq": 0.22,
+      "max_activation": 9.8,
+      "top_context": "CpG islands, GC-rich introns",
+      "domain": "euk",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.72,
+        "sensitivity": 0.66,
+        "reconstruction": 0.75,
+        "binned": 0.74,
+        "decomposability": 0.21,
+        "causal": 0.43
+      }
+    },
+    {
+      "feature_id": 2987,
+      "label": "TF_binding_site_GATA",
+      "best_f1": 0.68,
+      "best_f1_database": "JASPAR",
+      "auto_interp_score": 0.71,
+      "qc_dots": [
+        true,
+        true,
+        false,
+        true,
+        true,
+        false
+      ],
+      "activation_freq": 0.007,
+      "max_activation": 17.2,
+      "top_context": "GATA1/2 binding motif WGATAR",
+      "domain": "euk",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.93,
+        "sensitivity": 0.75,
+        "reconstruction": 0.35,
+        "binned": 0.78,
+        "decomposability": 0.94,
+        "causal": 0.29
+      }
+    },
+    {
+      "feature_id": 10334,
+      "label": "polyA_signal",
+      "best_f1": 0.73,
+      "best_f1_database": "RefSeq",
+      "auto_interp_score": 0.69,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "activation_freq": 0.005,
+      "max_activation": 15.4,
+      "top_context": "3\u2032 UTR AATAAA hexamer",
+      "domain": "euk",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.73,
+        "sensitivity": 0.73,
+        "reconstruction": 0.83,
+        "binned": 0.23,
+        "decomposability": 0.33,
+        "causal": 0.42
+      }
+    },
+    {
+      "feature_id": 8771,
+      "label": "codon_frame_periodicity",
+      "best_f1": 0.45,
+      "best_f1_database": "RefSeq",
+      "auto_interp_score": 0.81,
+      "qc_dots": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        false
+      ],
+      "activation_freq": 0.31,
+      "max_activation": 8.6,
+      "top_context": "CDS reading frame, every-3 phase",
+      "domain": "both",
+      "headline": false,
+      "qc_scores": {
+        "specificity": 0.78,
+        "sensitivity": 0.72,
+        "reconstruction": 0.97,
+        "binned": 0.81,
+        "decomposability": 0.18,
+        "causal": 0.16
+      }
+    }
+  ],
+  "methodology_checklist": {
+    "training": [
+      {
+        "label": "TopK with k=32",
+        "done": true,
+        "note": "Goodfire used BatchTopK k=64"
+      },
+      {
+        "label": "auxK auxiliary loss (Gao 2024)",
+        "done": true,
+        "note": "Decode-gLM used BatchTopK L_aux"
+      },
+      {
+        "label": "Encoder = transpose(decoder) init",
+        "done": true
+      },
+      {
+        "label": "Layer 22 (Hyena-MR, 88% depth)",
+        "done": true,
+        "note": "Operator-type matched to Goodfire's 7B layer 26"
+      }
+    ],
+    "evaluation": [
+      {
+        "label": "Domain-adjusted F1 (InterPLM)",
+        "done": true
+      },
+      {
+        "label": "Auto-interpretability scoring",
+        "done": true
+      },
+      {
+        "label": "Multivariate downstream probes",
+        "done": true,
+        "note": "Neither Goodfire nor Decode-gLM did this"
+      },
+      {
+        "label": "Six-property QC framework",
+        "done": true
+      },
+      {
+        "label": "Bio QC against multiple databases",
+        "done": true
+      },
+      {
+        "label": "Causal validation with biological readout",
+        "done": true
+      },
+      {
+        "label": "Multi-seed universality",
+        "done": false
+      },
+      {
+        "label": "Shuffled-weights control",
+        "done": false
+      },
+      {
+        "label": "K-mer u-shuffle control",
+        "done": false
+      }
+    ]
+  }
+}

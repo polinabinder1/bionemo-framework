@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 import App from './App'
 import ColoredSequence from './ColoredSequence'
 import GeneUMAPView from './GeneUMAPView'
-import SteeringComparison from './SteeringComparison'
+import SteeringExplorer from './SteeringExplorer'
+import SAESummary from './SAESummary'
 
 // Hit http://localhost:5176/#preview to see all three views side by side.
 // Tabs switch between the existing dashboard ("Main") and the two new
@@ -31,7 +32,8 @@ const TABS = [
   { id: 'main', label: 'Main dashboard (features + atlas + WebLogos)' },
   { id: 'sequence', label: 'ColoredSequence (mock 500bp)' },
   { id: 'genes', label: 'Gene UMAP (500 genes, precomputed)' },
-  { id: 'steering', label: 'Steering comparison (mock suppress/baseline/amplify)' },
+  { id: 'steering', label: 'Steering explorer (mock slider + heatmap)' },
+  { id: 'summary', label: 'SAE summary (eval state)' },
 ]
 
 const styles = {
@@ -261,13 +263,25 @@ export default function Preview() {
 
         {tab === 'steering' && (
           <div style={styles.genesWrap}>
-            <div style={styles.title}>Steering comparison</div>
+            <div style={styles.title}>Steering explorer</div>
             <div style={styles.subtitle}>
-              Side-by-side <b>suppress / baseline / amplify</b> of a chosen SAE feature at
-              a masked sequence position. All data is hand-rolled mock — when the real
+              Slide the <b>clamp</b> control to see per-position P(A/C/G/T) shifts across an entire
+              200 bp sequence. All data is algorithmically generated mock — when the real
               steering backend lands, the same UI swaps in live results.
             </div>
-            <SteeringComparison />
+            <SteeringExplorer />
+          </div>
+        )}
+
+        {tab === 'summary' && (
+          <div style={styles.genesWrap}>
+            <div style={styles.title}>SAE summary</div>
+            <div style={styles.subtitle}>
+              One-page snapshot of NS.1 evaluation state. Training-quality numbers are <b>real</b>
+              (from today's layer-22 winner sweep); QC / downstream / causal sections are
+              synthetic placeholders for evals that haven't run yet.
+            </div>
+            <SAESummary />
           </div>
         )}
       </div>
