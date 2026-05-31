@@ -1,149 +1,133 @@
-# Evo2 pre-SAE activation analysis scripts
+# Evo2 pre-SAE activation analysis
 
-Self-contained diagnostic scripts written to characterize evo2 1B residual-stream
-activations before training SAEs. All scripts are stand-alone — they read parquets
-written by `scripts/extract.py`, do an analysis, and print/save results. None of
-them write back to the parquets; none train SAEs.
+Self-contained diagnostics that read a parquet of activations (from
+`scripts/extract.py`) and report:
 
-These are the exploratory tools that produced the findings:
+- PCA spectrum (PR, top1/top2, k_var, stable rank)
+- Sink-channel + sink-token signatures (`v1`, `u1`)
+- PR after dropping the top X% of `|u1|` tokens (sink-removal robustness)
+- Top-K sink token identity: which (sequence, position) carries the dominant mode
+- Position-0 / first-N-positions enrichment vs the variable-length pool baseline
+- Cross-layer / cross-model token-set overlap
 
-- evo2 1B residual stream has a near-rank-1 PCA spectrum at layers 12-19
-- The dominance is a **sink-token / massive-activation** signature
-  (a few hundred specific input tokens carry huge values on 3 specific channels
-  `[56, 562, 1786]`)
-- Underlying rank after sink removal is high (~1800 of 1920 dims for 99% variance)
-- Layer 22 is in a totally different regime (no sink channels, diffuse top eigenvector)
+None of these scripts train SAEs or modify parquets.
+
+## Quick start
+
+For any (model, layer) extraction:
+
+```bash
+python run_analysis.py L26_7B \
+    /data/interp/evo2/activations/evo2_7b_layer26_parquet_25M_prokeuk_v2 \
+    --fasta /data/interp/evo2/scratch/mixed_25M_prokeuk_v2.fasta \
+    --cross-model /tmp/sink_identity_L19.csv
+```
+
+One load, full analysis, prints all sections to stdout, saves a sink CSV.
+Works for any hidden_dim (auto-detected from the parquet's metadata.json).
+
+## Layout
+
+```
+analysis_lib.py       single shared module — load, FASTA replay, eigh, sink metrics,
+                      identity, enrichment, cross-model overlap. 400 LOC.
+run_analysis.py       thin driver wrapping analysis_lib.analyze_layer.  40 LOC.
+
+sanity_checks.py             top-K set overlap + same-row across layers
+sanity_check_nonsink.py      companion: non-sink rows confirm cross-layer divergence
+dup_check.py                 within/across-shard duplicate sanity (one-off)
+dim_compare.py               two-parquet cross-model comparison (evo2 vs codonfm)
+dim_analysis.py              single-shard PCA (one-off; subsumed by run_analysis)
+extract_layer.sh             generic extract.py wrapper (LAYER/FASTA/OUT_DIR env)
+
+archive/                     earlier one-off prototypes preserved for reference
+                             (pr_test, uniform_random_pr, sink_analysis,
+                              sink_resample_fast, sink_identity, position_enrichment)
+                             — superseded by analysis_lib but kept for repro
+```
+
+## What `run_analysis.py` does, in order
+
+For one parquet:
+
+1. Loads N (default 1M) uniform-random rows from the parquet's shards.
+2. Centers by per-channel mean, runs covariance-eigh (`X^T X`, then `np.linalg.eigh`).
+3. Reports: PR, top1/top2 ratio, stable rank, cumulative-variance k for
+   50/80/90/95/99/99.9%.
+4. Reports v1 (channel direction) spikiness: max |v1| vs the isotropic floor
+   1/√d; lists spiky channel indices.
+5. Reports u1 (per-token loading on top mode) sink-shape: max/mean, 99.9th/50th
+   percentile ratio.
+6. Re-runs centered eigh after dropping the top 1% and top 5% of |u1| tokens,
+   reports PR and 99% var k — tells you the "true rank" once sinks are removed.
+7. Identifies the top-K |u1| tokens (default 1000), maps each to
+   (fasta_record, position_in_record) via the DP=4 round-robin reconstruction,
+   saves the CSV.
+8. Position histogram diagnostics: pos==0 count, position <10 count,
+   median position, mod-k periodicity check.
+9. Position enrichment factor at positions 0-9 against the empirical sample
+   baseline (correctly handles variable-length records).
+10. Cross-model token-set overlap if you pass `--cross-model <other.csv>`.
+
+## Re-using analysis_lib programmatically
+
+```python
+from analysis_lib import analyze_layer
+
+r = analyze_layer(
+    parquet_dir="/data/interp/evo2/activations/evo2_7b_layer26_parquet_25M_prokeuk_v2",
+    label="L26_7B",
+    fasta="/data/interp/evo2/scratch/mixed_25M_prokeuk_v2.fasta",
+    cross_model_csv="/tmp/sink_identity_L19.csv",
+)
+
+# r is a dict with the spectrum, sink, drops, top_sinks, enrichment,
+# cross_overlap, and meta fields. Use them however.
+```
+
+Lower-level building blocks if you want to deviate from the full pipeline:
+
+```python
+from analysis_lib import (
+    load_random_tokens,                # parquet -> (X, global_idx, meta)
+    parse_fasta_lengths,               # FASTA -> [int]
+    build_row_to_position_mapping,     # lengths, dp_size -> (seq_per_row, pos_per_row)
+    centered_eigen_top,                # X -> (mu, eigvals, v1, u1)
+    spectrum_metrics,                  # eigvals -> {PR, top1/2, stable_rank, k_var}
+    sink_diagnostics,                  # (v1, u1, hidden) -> {v1/u1 stats, spiky chans}
+    drop_top_sinks_metrics,            # (X, u1, pct) -> {PR, k99}
+    identify_top_sinks,                # (u1, idx, seq_per_row, pos_per_row, k) -> TopSinks
+    save_sink_csv / load_sink_csv,
+    position_enrichment,
+)
+```
 
 ## Path conventions
 
-All scripts hardcode these paths from the original experiment runs:
-
 ```
-parquets:  /data/interp/evo2/activations/<model>_layer<N>_parquet_<size>_<tag>/
-FASTA:     /data/interp/evo2/scratch/mixed_25M_prokeuk_v2.fasta
+parquets    /data/interp/evo2/activations/<model>_layer<N>_parquet_<scale>_<tag>/
+FASTA       /data/interp/evo2/scratch/mixed_<scale>_prokeuk_v2.fasta
+sink CSVs   /tmp/sink_identity_<label>.csv
 ```
 
-Adapt these when re-running elsewhere. Each script's top-level constants
-make the substitution straightforward.
+Adapt as needed.
 
-## Script catalog
+## Findings to reproduce
 
-Listed roughly in the order they were developed/used. Each script is a single
-file; run with `python <name>.py`.
+With seed=42 on the 25M v2 prok+euk parquets (1B model):
 
-### Dimensionality / rank diagnostics
-
-- **`dim_analysis.py`** — single-shard SVD on one layer's parquet. Computes PCA
-  spectrum, participation ratio, stable rank, cumulative variance thresholds.
-  First-pass tool. Output prints + `.npz`.
-
-- **`dim_compare.py`** — two-parquet comparison (evo2 vs codonfm). Loads 11
-  shards from each, slices to 1M tokens, computes spectra side-by-side.
-  Produced the headline "codonfm uses 82× more effective dims than evo2"
-  result.
-
-- **`uniform_random_pr.py`** — same metric as dim_compare but on a *uniform-random*
-  1M sample from one parquet (vs contiguous shard slices). Sanity check that
-  contiguous sampling wasn't biasing the result.
-
-### Sink / massive-activation diagnostics
-
-- **`sink_analysis.py`** — first full-SVD sink analysis (with U+V matrices).
-  Reports `‖μ‖`, top1/top2 eigenvalue ratio, v1 spikiness, u1 sink-token
-  signature, and PR after dropping the top X% of `|u1|`. Slow (~200s per SVD).
-  Superseded by `sink_resample_fast.py`.
-
-- **`sink_resample_fast.py`** — same diagnostics as `sink_analysis.py` but via
-  covariance-eigh (X^T X, eigh on 1920×1920) instead of full SVD. ~5-10×
-  faster. Also does N resamples with different seeds for robustness — reports
-  per-metric mean ± std across seeds plus pairwise top-1% token overlap.
-
-- **`dup_check.py`** — checks whether the rank measurement is inflated by
-  duplicate or near-duplicate tokens. Exact-row duplicate count + stride-subsample
-  PR + cross-shard PR with 1, 10, 100, 1000 tokens per shard.
-
-- **`sink_identity.py`** — per-token sink identification. For each layer:
-  1. Load 1M random tokens (seed=42 for cross-layer comparability)
-  2. Compute centered SVD via covariance method → u1, v1
-  3. Take top-1000 `|u1|` tokens
-  4. Map each parquet row to `(sequence_id, position_in_sequence)` via
-     FASTA-replay (assumes DP=4 round-robin)
-  5. Report: position histogram, sequence diversity, spiky channels (v1
-     indices), prok/euk split, cross-layer overlap, periodicity checks
-  6. Emit per-layer CSV `(global_idx, seq_id, pos_in_seq, u1_abs)`
-
-- **`position_enrichment.py`** — properly-baselined position enrichment.
-  Variable-length sequence pool means uniform `[0, 8191]` isn't the right
-  baseline. This script regenerates the same 1M-row sample, computes the
-  empirical position-frequency baseline, then loads each layer's sink CSV
-  and reports enrichment factor at position 0 and positions 0..9. Produces
-  a histogram-with-baseline-overlay PNG per layer.
-
-### Sanity checks
-
-- **`sanity_checks.py`** — checks 2 and 3 from the original "are these results
-  real" review:
-  - Check 2: token-set overlap across layers (set intersection of top-1000)
-  - Check 3: same parquet row across layers (cosine similarity of activation
-    vectors)
-  Confirms that overlapping top-1000 isn't a data-reading bug — the sets
-  are 988-998/1000 (high but not exactly identical).
-
-- **`sanity_check_nonsink.py`** — companion to check 3: pulls 5 random *non-sink*
-  rows and compares activations across layers. Shows that non-sink rows have
-  much lower cosine similarity (0.7-0.95) than sink rows (>0.9999), confirming
-  the sink-row cosine-1.0 is a sink-channel-dominance artifact and not a
-  data bug.
-
-- **`sink_loss_checks.py`** — numerical verification of the SAE loss formula
-  on the trained 500M layer-22 checkpoint. Confirms `fvu + var_explained = 1`
-  exactly, inspects `pre_bias` drift, and traces the aux-loss residual
-  formulation. Used to find the aux-loss bug fixed in the parent branch
-  (`topk.py`: residual = x - recon, not x - recon + pre_bias).
-
-### Helpers
-
-- **`extract_layer.sh`** — generic single-extraction shell wrapper around
-  `scripts/extract.py`. Takes `LAYER`, `FASTA`, `OUT_DIR`, `MICRO_BATCH` from
-  env. Used to drive layer-specific extractions outside the main `1b.sh`
-  pipeline.
-
-- **`pr_test.py`** — minimal uniform-random PR test for one parquet (used as
-  a chained step in some pipeline shell scripts during development).
-
-## Typical workflow
-
-1. Train an SAE recipe extraction → parquet at
-   `evo2_1b_base_layer<N>_parquet_<scale>_<tag>/`.
-2. Run `python uniform_random_pr.py` on it → check spectrum.
-3. If PR looks suspiciously low: `python sink_resample_fast.py <parquet>` →
-   confirm sink-token signature with 3 resamples.
-4. If sinks confirmed: `python sink_identity.py` → identify which tokens.
-5. `python position_enrichment.py` → check if sinks are positional.
-6. `python sanity_checks.py` and `python sanity_check_nonsink.py` → confirm
-   results aren't artifacts.
-
-## Reproducing the key results
-
-Run with the same seeds (`SEED=42` throughout) and the same 25M v2 prok+euk
-FASTA, against the four layer-12/15/19/22 parquets, to reproduce:
-
-- Same 3 spiky channels at L12/L15/L19: `[56, 562, 1786]`
-- 988-998/1000 top-token overlap between any two of L12/L15/L19
-- L22 has no spiky channels, diffuse top eigenvector
-- pos-0 enrichment 34.48× at L12/L15/L19, 0× at L22
-- Underlying rank after dropping top 5% sinks: ~1816-1833 dims (out of 1920)
-  for L12/L15/L19; only ~8 dims for L22
+- Same 3 spiky v1 channels at L12/L15/L19: `[56, 562, 1786]`
+- Top-1000 token overlap 988-998/1000 between any two of L12/L15/L19
+- L22 has no spiky channels, diffuse top eigenvector, true low-rank
+- After dropping top 5% sinks at L12/L15/L19: 99% var k ≈ 1816-1833
+  (out of 1920) — i.e. nearly full rank
+- L22 is genuinely 99% var in k=8 even with sinks removed
 
 ## Caveats
 
-- All scripts assume DP=4 round-robin record ordering for the FASTA-replay
-  position mapping (`build_parquet_row_mapping` in `sink_identity.py`).
-  This matches how `predict_evo2`'s distributed sampler arranged sequences
-  for our extractions. Different DP size → adjust `DP_SIZE` constant.
-- The v1/v2 FASTA composition matters: position-based stats use the
-  knowledge that the v2 FASTA has 1500 prok records of 8192bp each + 2500
-  euk records of ~5000bp each. Different mixes need recomposed baselines.
-- `sink_loss_checks.py` was specific to debugging the aux-loss residual.
-  It loads a particular trained SAE checkpoint and probably won't run
-  elsewhere without path edits.
+- The DP=4 round-robin assumption matches predict_evo2's distributed sampler
+  for our extractions. If you change `--nproc_per_node`, update `dp_size`.
+- The FASTA replay assumes record order in the parquet matches the order
+  the FASTA was processed in. Verified empirically for our pipeline.
+- Float32 throughout; covariance eigh has plenty of precision for top-N
+  eigenvalues separated by orders of magnitude.
