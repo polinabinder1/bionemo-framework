@@ -126,6 +126,110 @@ def load_single_row(parquet_dir, global_idx):
                     dtype=np.float32)
 
 
+def load_rows(parquet_dir, rows):
+    """Load arbitrary row indices from sharded parquet. Returns float32 [len(rows), hidden]."""
+    d = Path(parquet_dir)
+    meta = json.load(open(d / "metadata.json"))
+    hidden, ss = meta["hidden_dim"], meta["shard_size"]
+    rows = np.sort(np.array(rows))
+    X = np.empty((len(rows), hidden), dtype=np.float32)
+    by_shard = defaultdict(lambda: ([], []))
+    for k, gi in enumerate(rows):
+        s, r = int(gi // ss), int(gi % ss)
+        by_shard[s][0].append(r); by_shard[s][1].append(k)
+    for s in sorted(by_shard):
+        t = pq.read_table(d / f"shard_{s:05d}.parquet")
+        full = np.stack([t.column(f"dim_{j}").to_numpy() for j in range(hidden)], axis=1).astype(np.float32)
+        rr, pp = map(np.array, by_shard[s])
+        keep = rr < full.shape[0]
+        X[pp[keep]] = full[rr[keep]]
+    return X
+
+
+def parse_fasta_with_meta(path):
+    """Parse FASTA where headers carry 'key=value|key=value|...' metadata.
+    Returns list of dicts; numeric fields auto-converted; 'stitch_pos' parsed as list of ints.
+    Always includes 'actual_len' (computed)."""
+    recs, cur, meta = [], 0, None
+    for line in open(path):
+        if line.startswith(">"):
+            if meta is not None:
+                meta["actual_len"] = cur; recs.append(meta)
+            d = {}
+            for kv in line[1:].strip().split("|"):
+                if "=" in kv:
+                    k, v = kv.split("=", 1); d[k] = v
+            meta = {}
+            for k, v in d.items():
+                if k == "stitch_pos":
+                    meta[k] = [int(p) for p in v.split(",") if p]
+                else:
+                    try: meta[k] = int(v)
+                    except ValueError: meta[k] = v
+            cur = 0
+        else:
+            cur += len(line.rstrip())
+    if meta is not None:
+        meta["actual_len"] = cur; recs.append(meta)
+    return recs
+
+
+def analyze_conditions(parquet_dir, fasta, top_k=200, subsample=200_000, dp_size=4, seed=42):
+    """Per-condition PCA + sink ID. Headers must carry cond=NAME metadata.
+    Returns {cond: {metrics, mu_norm, sink_pos, sink_seq, sink_u, sink_rows, tag_lens, stitch_set}}.
+    """
+    recs = parse_fasta_with_meta(fasta)
+    lens = [r["actual_len"] for r in recs]
+    seq_per_row, pos_per_row = row_to_position(lens, dp_size)
+    meta = json.load(open(Path(parquet_dir) / "metadata.json"))
+    print(f"  {len(recs)} records, {len(seq_per_row):,} tokens, hidden={meta['hidden_dim']}")
+
+    # Pre-build stitch_set if any record has stitch_pos
+    stitch_set = {(i, p) for i, r in enumerate(recs) for p in r.get("stitch_pos", [])}
+    if stitch_set:
+        print(f"  total stitch (@) positions across records: {len(stitch_set):,}")
+
+    cond_to_rows = defaultdict(list)
+    for row in range(len(seq_per_row)):
+        cond_to_rows[recs[int(seq_per_row[row])]["cond"]].append(row)
+
+    rng = np.random.default_rng(seed)
+    results = {}
+    for cond, rows in cond_to_rows.items():
+        if len(rows) > subsample:
+            rows = rng.choice(rows, subsample, replace=False).tolist()
+        print(f"\n--- {cond} ({len(rows):,} tokens) ---", flush=True)
+        t0 = time.time()
+        X = load_rows(parquet_dir, rows)
+        print(f"  load: {time.time()-t0:.1f}s")
+        mu, ev, v1, u1 = pca_top(X)
+        m = metrics(ev, v1, u1, X.shape[1])
+        u1a = np.abs(u1)
+        sel = np.argsort(u1a)[::-1][:top_k]
+        rows_arr = np.array(rows)
+        sink_rows = rows_arr[sel]; sink_pos = pos_per_row[sink_rows]; sink_seq = seq_per_row[sink_rows]
+        tag_lens = np.array([recs[int(s)].get("tag_len", 0) for s in sink_seq])
+        in_tag = int((sink_pos < tag_lens).sum()) if (tag_lens > 0).any() else 0
+        on_stitch = sum(1 for s, p in zip(sink_seq, sink_pos) if (int(s), int(p)) in stitch_set)
+
+        print(f"  PR={m['PR']:.2f}  top1/top2={m['top1/top2']:.1f}  v1_max/iso={m['v1_max_over_iso']:.1f}x  spiky={m['spiky_channels']}")
+        print(f"  ||mu||={np.linalg.norm(mu):.2f}  u1_max/mean={m['u1_max_over_mean']:.0f}")
+        print(f"  top-{top_k} sinks: median pos={int(np.median(sink_pos))}, in_tag={in_tag}/{top_k}, on_stitch={on_stitch}/{top_k}")
+
+        results[cond] = dict(metrics=m, mu_norm=float(np.linalg.norm(mu)),
+                             sink_pos=sink_pos.tolist(), sink_seq=sink_seq.tolist(),
+                             sink_u=u1a[sel].tolist(), tag_lens=tag_lens.tolist(),
+                             in_tag=in_tag, on_stitch=on_stitch)
+        del X
+
+    print(f"\n{'cond':<20} {'PR':>6} {'top1/top2':>10} {'v1_max/iso':>11} {'||mu||':>8} {'spiky':<25} {'in_tag':>7} {'on_stitch':>10}")
+    for c, r in results.items():
+        m = r["metrics"]
+        print(f"{c:<20} {m['PR']:>6.2f} {m['top1/top2']:>10.1f} {m['v1_max_over_iso']:>11.1f} "
+              f"{r['mu_norm']:>8.2f} {str(m['spiky_channels']):<25} {r['in_tag']:>7} {r['on_stitch']:>10}")
+    return results
+
+
 def position_enrichment(sink_pos, sample_pos, n_top, n_sample, max_pos=10):
     """Per-position enrichment vs sample baseline."""
     base = np.bincount(sample_pos, minlength=max_pos).astype(np.int64)

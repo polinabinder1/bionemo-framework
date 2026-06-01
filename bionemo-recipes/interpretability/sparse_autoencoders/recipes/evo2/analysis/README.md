@@ -29,21 +29,24 @@ Works for any hidden_dim (auto-detected from the parquet's metadata.json).
 ## Layout
 
 ```
-analysis_lib.py       single shared module — load, FASTA replay, eigh, sink metrics,
-                      identity, enrichment, cross-model overlap. 400 LOC.
-run_analysis.py       thin driver wrapping analysis_lib.analyze_layer.  40 LOC.
+analysis_lib.py                single shared module — load, FASTA replay, eigh,
+                               sink metrics, identity, enrichment, cross-model
+                               overlap, condition-stratified analysis.
+run_analysis.py                driver wrapping analysis_lib.analyze_layer.
+run_condition_analysis.py      driver wrapping analysis_lib.analyze_conditions
+                               (per-condition PCA for tagged/random/stitch tests).
 
-sanity_checks.py             top-K set overlap + same-row across layers
-sanity_check_nonsink.py      companion: non-sink rows confirm cross-layer divergence
-dup_check.py                 within/across-shard duplicate sanity (one-off)
-dim_compare.py               two-parquet cross-model comparison (evo2 vs codonfm)
-dim_analysis.py              single-shard PCA (one-off; subsumed by run_analysis)
-extract_layer.sh             generic extract.py wrapper (LAYER/FASTA/OUT_DIR env)
+sanity_checks.py               top-K set overlap + same-row across layers.
+dim_compare.py                 two-parquet cross-model comparison.
+extract_layer.sh               generic extract.py wrapper (LAYER/FASTA/OUT_DIR env).
 
-archive/                     earlier one-off prototypes preserved for reference
-                             (pr_test, uniform_random_pr, sink_analysis,
-                              sink_resample_fast, sink_identity, position_enrichment)
-                             — superseded by analysis_lib but kept for repro
+compose_special_token_test.py  build FASTA with prepended phylo tags + length variants.
+compose_random_acgt.py         build FASTA of random ACGT (uniform / GC-rich / AT-rich).
+compose_stitch_test.py         build FASTA with @ stitch tokens at known positions.
+
+Each composer writes a FASTA where headers carry cond=NAME|src=...|tag_len=...|
+total_len=...|stitch_pos=p1,p2,... metadata. run_condition_analysis.py reads
+that metadata, slices the parquet by condition, and runs PCA/sink ID per slice.
 ```
 
 ## What `run_analysis.py` does, in order
@@ -122,6 +125,23 @@ With seed=42 on the 25M v2 prok+euk parquets (1B model):
 - After dropping top 5% sinks at L12/L15/L19: 99% var k ≈ 1816-1833
   (out of 1920) — i.e. nearly full rank
 - L22 is genuinely 99% var in k=8 even with sinks removed
+
+## Sink-mechanism hypothesis tests (1B L19)
+
+Used the three `compose_*.py` builders + `run_condition_analysis.py` to test
+four hypotheses about what causes sinks. All produced the same v1 spiky
+channels `[56, 562, 1786]`:
+
+| Condition (FASTA)                        | Hypothesis tested                              | Result        |
+|------------------------------------------|------------------------------------------------|---------------|
+| tagged_full / partial / minimal          | phylo tag is a register slot                   | 0–1% on tag   |
+| length_4096 / length_6144                | EOD causes late-cluster                        | no end-lock   |
+| stitch_1k / stitch_2k / stitch_irreg     | `@` stitch token is a register slot            | 0–1% on `@`   |
+| random_uniform / gc_rich / at_rich       | sinks need biological content                  | full strength |
+
+Conclusion: sinks are an architectural property of striped-Hyena at L19,
+input-content-independent. Filter by `|u1|` magnitude, not by token identity
+or position.
 
 ## Caveats
 
