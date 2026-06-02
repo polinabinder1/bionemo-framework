@@ -67,6 +67,15 @@ def parse_args():  # noqa: D103
     sae_group.add_argument("--dead-tokens-threshold", type=int, default=10_000_000)
     sae_group.add_argument("--init-pre-bias", action=argparse.BooleanOptionalAction, default=False)
     sae_group.add_argument("--l1-coeff", type=float, default=1e-2, help="L1 coefficient (relu only)")
+    sae_group.add_argument(
+        "--sink-filter-channels", type=int, nargs="*", default=None,
+        help="Channels to use for sink filtering (e.g. 56 562 1786). "
+             "If set with --sink-filter-threshold, drops tokens where max(|x[c]|)>threshold.",
+    )
+    sae_group.add_argument(
+        "--sink-filter-threshold", type=float, default=None,
+        help="Threshold for sink filter on raw activations. Requires --sink-filter-channels.",
+    )
 
     # Training
     train_group = p.add_argument_group("Training")
@@ -268,6 +277,16 @@ def main():  # noqa: D103
             f"Peak RAM: ~{shard_size * meta['hidden_dim'] * 4 / (1024**3):.1f}GB/process"
         )
 
+        # Optional sink filter (drops tokens whose max(|x[c]|) > threshold on
+        # the listed channels). Applied at shard-load time inside the dataset.
+        filter_fn = None
+        if args.sink_filter_threshold is not None and args.sink_filter_channels:
+            sink_chans = list(args.sink_filter_channels)
+            sink_thr = float(args.sink_filter_threshold)
+            def filter_fn(shard):  # noqa: E306
+                # shard: torch.Tensor [N, D]; returns bool[N] of rows to KEEP
+                return shard[:, sink_chans].abs().amax(dim=-1) <= sink_thr
+            print(f"Sink filter ACTIVE: drop max(|x[{sink_chans}]|) > {sink_thr}")
         dataloader = store.get_streaming_dataloader(
             batch_size=args.batch_size,
             shuffle=args.shuffle,
@@ -275,6 +294,7 @@ def main():  # noqa: D103
             rank=rank,
             world_size=world_size,
             max_shards=max_shards,
+            filter_fn=filter_fn,
         )
         # Compute min batch count across all ranks to keep DDP in sync
         # Read parquet footers for all ranks' shards (a few KB each, no data loading)
@@ -293,6 +313,17 @@ def main():  # noqa: D103
                 batches = total_rows // args.batch_size
                 if min_batches is None or batches < min_batches:
                     min_batches = batches
+            # If filtering is active, the post-filter batch count per rank is
+            # slightly lower and varies per rank. Shrink min_batches by a safety
+            # margin so all ranks definitely have enough data to reach this cap
+            # (else: straggler exits early -> NCCL allreduce timeout at teardown).
+            if filter_fn is not None:
+                # Drop rate is ~0.1%; we use a 1% margin (10x headroom) to be safe.
+                safety_margin = max(2, int(min_batches * 0.01))
+                old_min = min_batches
+                min_batches = min_batches - safety_margin
+                print(f"[rank {rank}] filter active -> min_batches "
+                      f"{old_min} -> {min_batches} (safety margin {safety_margin})")
             dataset.max_batches = min_batches
             print(f"[rank {rank}] capped to {min_batches} batches/epoch for DDP sync")
         trainer.fit(

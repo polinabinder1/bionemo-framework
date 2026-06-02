@@ -332,6 +332,7 @@ class ActivationStore:
         rank: int = 0,
         world_size: int = 1,
         max_shards: Optional[int] = None,
+        filter_fn: Optional[callable] = None,
     ) -> DataLoader:
         """Get a streaming DataLoader that reads one shard at a time from disk.
 
@@ -368,6 +369,7 @@ class ActivationStore:
             batch_size=batch_size,
             shuffle=shuffle,
             seed=seed,
+            filter_fn=filter_fn,
         )
 
         # batch_size=None: dataset already yields pre-formed batches
@@ -491,13 +493,16 @@ class _StreamingBatchDataset(IterableDataset):
         batch_size: int = 4096,
         shuffle: bool = True,
         seed: Optional[int] = None,
+        filter_fn: Optional[callable] = None,
     ):
         self.store = store
         self.shard_indices = shard_indices
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
+        self.filter_fn = filter_fn  # (tensor[N,D]) -> bool tensor[N] of rows to KEEP
         self.max_batches = None  # Set externally to cap iteration (for DDP sync)
+        self.n_filtered = 0  # cumulative count of dropped tokens
 
         # Approximate length: total tokens in assigned shards / batch_size
         shard_size = store.metadata.get("shard_size", 100_000)
@@ -512,8 +517,20 @@ class _StreamingBatchDataset(IterableDataset):
 
         buffer = None
         n_yielded = 0
+        n_seen_this_iter = 0
+        n_filtered_this_iter = 0
         for shard_idx in indices:
             shard = torch.from_numpy(self.store._load_shard(shard_idx)).float()
+            if self.filter_fn is not None:
+                pre = shard.shape[0]
+                keep = self.filter_fn(shard)
+                dropped = int((~keep).sum().item())
+                self.n_filtered += dropped
+                n_filtered_this_iter += dropped
+                n_seen_this_iter += pre
+                shard = shard[keep]
+            else:
+                n_seen_this_iter += shard.shape[0]
             if self.shuffle:
                 shard = shard[torch.randperm(len(shard))]
 
@@ -529,6 +546,13 @@ class _StreamingBatchDataset(IterableDataset):
         # Yield remainder as a partial batch (skip if capped)
         if self.max_batches is None and buffer is not None and len(buffer) > 0:
             yield buffer
+
+        # End-of-iteration filter report
+        if self.filter_fn is not None and n_seen_this_iter > 0:
+            pct = 100.0 * n_filtered_this_iter / n_seen_this_iter
+            print(f"[filter] iter complete: dropped {n_filtered_this_iter:,} / "
+                  f"{n_seen_this_iter:,} tokens ({pct:.4f}%) "
+                  f"| cumulative dropped: {self.n_filtered:,}", flush=True)
 
     def __len__(self) -> int:
         if self.max_batches is not None:
